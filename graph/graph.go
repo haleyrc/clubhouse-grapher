@@ -8,8 +8,10 @@ import (
 )
 
 const GraphHeader = `digraph %q {
-    rankdir=LR;
-    splines=polyline;
+	layout="dot";
+	rankdir=LR;
+	ranksep=2;
+    splines=ortho;
     overlap=false;
     node[shape="box",style="filled",fillcolor="white",penwidth="3"];
     label="%s";
