@@ -93,6 +93,7 @@ type Story struct {
 
 	Project  *Project
 	Blockers []*Story
+	Blocks   []*Story
 }
 
 func NewClient(token string) *Client {
@@ -140,10 +141,12 @@ func (c Client) GetWorkspace(ctx context.Context, params GetWorkspaceParams) (*W
 	for _, story := range stories {
 		story.Project = findProject(story.ProjectID, projects)
 		for _, link := range story.StoryLinks {
-			if link.Type != "object" {
-				continue
+			if link.Type == "object" {
+				story.Blockers = append(story.Blockers, findStory(link.SubjectID, stories))
 			}
-			story.Blockers = append(story.Blockers, findStory(link.SubjectID, stories))
+			if link.Type == "subject" {
+				story.Blocks = append(story.Blocks, findStory(link.ObjectID, stories))
+			}
 		}
 		workspace.Stories = append(workspace.Stories, story)
 	}

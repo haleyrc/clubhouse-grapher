@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/haleyrc/clubhouse"
 )
@@ -11,8 +12,8 @@ const GraphHeader = `digraph %q {
 	layout="dot";
 	rankdir=LR;
 	ranksep=2;
-    splines=ortho;
-    overlap=false;
+    // splines=ortho;
+    // overlap=false;
     node[shape="box",style="filled",fillcolor="white",penwidth="3"];
     label="%s";
 `
@@ -29,16 +30,30 @@ func NewGraph(name string, workspace *clubhouse.Workspace) *Graph {
 	allRanks := make(map[int]bool)
 	allProjects := make(map[string]bool)
 	for _, story := range workspace.Stories {
+		rank := rankFor(story)
+		if story.Completed {
+			rank = -100 + rank
+		}
 		n := Node{
 			ID:        story.ID,
 			Label:     story.Name,
 			Project:   story.Project.Name,
 			Color:     story.Project.Color,
 			FillColor: colorFor(story),
-			Rank:      rankFor(story),
+			Rank:      rank,
+			Completed: story.Completed,
 		}
 		for _, blocker := range story.Blockers {
+			if blocker == nil {
+				continue
+			}
 			n.Blockers = append(n.Blockers, blocker.ID)
+		}
+		for _, blocked := range story.Blocks {
+			if blocked == nil {
+				continue
+			}
+			n.Blocks = append(n.Blocks, blocked.ID)
 		}
 		g.Nodes = append(g.Nodes, &n)
 		allRanks[n.Rank] = true
@@ -50,6 +65,10 @@ func NewGraph(name string, workspace *clubhouse.Workspace) *Graph {
 		g.Ranks = append(g.Ranks, rank)
 	}
 	sort.Ints(g.Ranks)
+	normed := normalize(g.Ranks)
+	for _, node := range g.Nodes {
+		node.Rank = normed[node.Rank]
+	}
 
 	for project := range allProjects {
 		g.Projects = append(g.Projects, project)
@@ -57,6 +76,14 @@ func NewGraph(name string, workspace *clubhouse.Workspace) *Graph {
 	sort.Strings(g.Projects)
 
 	return &g
+}
+
+func normalize(vals []int) map[int]int {
+	normed := make(map[int]int)
+	for i, val := range vals {
+		normed[val] = i
+	}
+	return normed
 }
 
 type Graph struct {
@@ -67,47 +94,60 @@ type Graph struct {
 	ProjectColors map[string]string
 }
 
-func (g Graph) String() string {
-	cluster := -1
+func (g Graph) ToString() string {
 	w := NewWriter()
 
 	header := fmt.Sprintf(GraphHeader, g.Name, g.Name)
 	w.WriteString(0, header)
 	for _, project := range g.Projects {
-		cluster++
-		w.WriteStringf(1, "subgraph cluster_%d {\n", cluster)
-		w.WriteString(2, "rank=same;\n")
-		w.WriteStringf(2, "label=%q;\n", project)
-		w.WriteStringf(2, "labeljust=\"l\";\n")
-		w.WriteStringf(2, "style=\"filled\";\n")
-		w.WriteStringf(2, "fillcolor=%q;\n", g.ProjectColors[project])
-		for rank := range g.Ranks {
-			cluster++
-			w.WriteStringf(3, "subgraph cluster_%d {\n", cluster)
-			w.WriteString(4, "rank=same;\n")
-			w.WriteStringf(4, "label=\"\";\n")
-			w.WriteStringf(4, "style=invis;\n")
-			for _, node := range g.Nodes {
-				if node.Rank != rank || node.Project != project {
-					continue
-				}
-				w.WriteLn(4, node)
+		for _, node := range g.Nodes {
+			if node.Project != project {
+				continue
 			}
-			w.WriteString(3, "}\n")
+			w.WriteLn(1, node)
 		}
-		w.WriteString(1, "}\n")
 	}
+
 	for _, node := range g.Nodes {
-		for _, blocker := range node.Blockers {
-			w.WriteStringf(1, "node%d->node%d;\n", blocker, node.ID)
+		if node.Blocks == nil || len(node.Blocks) == 0 {
+			continue
 		}
+		var allBlocks []string
+		for _, blocks := range node.Blocks {
+			s := fmt.Sprintf("node%d", blocks)
+			allBlocks = append(allBlocks, s)
+		}
+		if len(allBlocks) < 1 {
+			continue
+		}
+		blocks := strings.Join(allBlocks, " ")
+		w.WriteStringf(1, "node%d -> { %s };\n", node.ID, blocks)
 	}
+
+	nodesInRanks := make(map[int][]string)
+	for _, node := range g.Nodes {
+		nodesInRanks[node.Rank] = append(
+			nodesInRanks[node.Rank],
+			fmt.Sprintf("node%d", node.ID),
+		)
+	}
+	for rank, nodes := range nodesInRanks {
+		w.WriteStringf(1,
+			"subgraph cluster_%d { style=invis; rank=same; %s }\n",
+			rank,
+			strings.Join(nodes, ", "),
+		)
+	}
+
 	w.WriteString(0, "}")
 
 	return w.String()
 }
 
 func rankFor(story *clubhouse.Story) int {
+	if story == nil || story.Blockers == nil {
+		return 0
+	}
 	predRanks := []int{0} // Seed with a 0 so we always get a result
 	for _, blocker := range story.Blockers {
 		predRanks = append(predRanks, rankFor(blocker)+1)
